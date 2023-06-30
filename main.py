@@ -9,8 +9,8 @@ import pyaudio
 import threading
 import queue
 
-sample_rate = 4096
-samples_per_loop = 256
+sample_rate = 44100 // 4
+samples_per_loop = 512
 loops_per_draw = 1
 
 audio_queue = queue.Queue()
@@ -42,18 +42,6 @@ stream = audio.open(format = pyaudio.paInt16,
     frames_per_buffer = sample_rate,
     input_device_index = input_device)
 
-def audio_thread():
-    while True:
-        sample = stream.read(samples_per_loop, exception_on_overflow = False)
-        audio_queue.put(sample)
-        
-        if not halt_queue.empty():
-            print("Halting thread!")
-            break
-
-thread = threading.Thread(target=audio_thread)
-thread.start()
-
 for i in range(samples_per_loop):
     audio_samples.append(1)
     if (i <= samples_per_loop // 2):
@@ -70,8 +58,9 @@ line1, = ax.plot(fft_output)
 loop_counter = 0  
 while True:
     try:
-        if not audio_queue.empty():
-            data = audio_queue.get() #get samples from data
+        #if not audio_queue.empty():
+            #data = audio_queue.get() #get samples from data
+            data = stream.read(samples_per_loop, exception_on_overflow = True)
             
             if (loop_counter % loops_per_draw == 0):
                 for i in range(samples_per_loop):
@@ -88,9 +77,9 @@ while True:
                 fig.canvas.flush_events()
                 
             
-            loop_counter += 1
+            #loop_counter += 1
     except KeyboardInterrupt:
         halt_queue.put(True)
-        thread.join()
+        #thread.join()
         print("Goodbye!")
         break
