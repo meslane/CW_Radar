@@ -13,6 +13,8 @@ sample_rate = 44100 // 4
 samples_per_loop = 512
 loops_per_draw = 1
 
+F_0 = 3.4e9 #CW frequency
+
 audio_queue = queue.Queue()
 halt_queue = queue.Queue()
 
@@ -69,8 +71,9 @@ while True:
                 fft_output = np.abs(np.fft.rfft(audio_samples)) #only get one side
                 
                 max_tone = np.argmax(fft_output) * (sample_rate/samples_per_loop) #get freq of hightest amplitude
+                velocity = (3e8 * max_tone) / (2 * F_0)
                 
-                print("Max frequency: {} Hz".format(max_tone))
+                print("Max frequency: {:.2f} Hz, Velocity: {:.2f} m/s ({:.2f} mph)".format(max_tone, velocity, velocity * 2.237))
                 
                 line1.set_ydata(fft_output)
                 fig.canvas.draw()
