@@ -9,17 +9,19 @@ import pyaudio
 import threading
 import queue
 
-sample_rate = 4000
-spec_samples = 8192
+sample_rate = 4096
 samples_per_loop = 256
-loops_per_draw = 2
+loops_per_draw = 1
+
 audio_queue = queue.Queue()
 halt_queue = queue.Queue()
 
 #matplotlib setup
 fig = plt.figure()
 samples = []
-fft_samples = []
+
+audio_samples = []
+fft_output = []
 
 #audio device setup
 audio = pyaudio.PyAudio()
@@ -53,16 +55,17 @@ thread = threading.Thread(target=audio_thread)
 thread.start()
 
 for i in range(samples_per_loop):
-    fft_samples.append(1)
+    audio_samples.append(1)
+    if (i <= samples_per_loop // 2):
+        fft_output.append(0)
 
 plt.ion()
 fig = plt.figure()
 ax = fig.add_subplot(111)
-#line1 = ax.specgram(samples, Fs = sample_rate)
-ax.set_ylim([1,1000000])
-ax.set_xlim([0,127])
+ax.set_ylim([1,1e9])
+#ax.set_xlim([0,samples_per_loop/2])
 ax.set_yscale("log")
-line1, = ax.plot(fft_samples)
+line1, = ax.plot(fft_output)
 
 loop_counter = 0  
 while True:
@@ -70,17 +73,20 @@ while True:
         if not audio_queue.empty():
             data = audio_queue.get() #get samples from data
             
-            for i in range(samples_per_loop):
-                fft_samples[i] = int.from_bytes(data[(i*2):(i*2)+2], "little", signed=True)
-                
-            #print(samples[-1])
-            
             if (loop_counter % loops_per_draw == 0):
-                #line1 = ax.specgram(samples, Fs = sample_rate)
-                fft_samples = np.abs(np.fft.fft(fft_samples))
-                line1.set_ydata(fft_samples)#ax.plot(fft_samples)
+                for i in range(samples_per_loop):
+                    audio_samples[i] = int.from_bytes(data[(i*2):(i*2)+2], "little", signed=True)
+            
+                fft_output = np.abs(np.fft.rfft(audio_samples)) #only get one side
+                
+                max_tone = np.argmax(fft_output) * (sample_rate/samples_per_loop) #get freq of hightest amplitude
+                
+                print("Max frequency: {} Hz".format(max_tone))
+                
+                line1.set_ydata(fft_output)
                 fig.canvas.draw()
                 fig.canvas.flush_events()
+                
             
             loop_counter += 1
     except KeyboardInterrupt:
