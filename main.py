@@ -22,8 +22,8 @@ from tkinter import ttk
 
 sd.default.latency = 'low'
 
-SAMPLE_RATE = 11025
-SAMPLES_PER_LOOP = 1024
+SAMPLE_RATE = 7000
+SAMPLES_PER_LOOP = 512
 
 FFT_MIN = 1
 FFT_MAX = 1e10
@@ -64,15 +64,19 @@ class Window:
         self.audio_queue = queue.Queue()
         
         #fft waterfall display
-        self.fft_plot = Figure(figsize=(16, 9), dpi=50)
-        self.fft_plot.tight_layout()
+        plt.rcParams.update({'font.size': 20})
+        
+        self.fft_plot = Figure(figsize=(16, 9), dpi=60)
+        self.fft_plot.set_tight_layout(True)
         self.fft_ax = self.fft_plot.add_subplot(1,1,1)
+        self.fft_ax.set_ylabel('Time (samples)')
+        self.fft_ax.set_xlabel('Frequency (Hz)')
         self.fft_canvas = FigureCanvasTkAgg(self.fft_plot, self.window)
         self.fft_canvas.get_tk_widget().grid(column=0,row=0,rowspan=3)
-        self.fft_animation = animation.FuncAnimation(self.fft_plot, self.animate_plot, interval=1000)
+        self.fft_animation = animation.FuncAnimation(self.fft_plot, self.animate_plot, interval=250)
         
-        self.fft_data = []#np.random.rand(SAMPLES_PER_LOOP // 2 + 1,1000)
-        
+        #init fft data array
+        self.fft_data = []
         for x in range(200):
             self.fft_data.append([])
             for y in range(SAMPLES_PER_LOOP // 2 + 1):
@@ -81,7 +85,10 @@ class Window:
         self.fft_im = self.fft_ax.imshow(self.fft_data, 
                                             interpolation='none', 
                                             animated = True,
-                                            norm=colors.LogNorm(vmin=1, vmax=1e10))
+                                            norm=colors.LogNorm(vmin=1, vmax=FFT_MAX),
+                                            aspect='auto',
+                                            origin='lower',
+                                            extent=[0, SAMPLE_RATE // 2, 200, 0])
         
         #widgets
         #threshold
@@ -204,9 +211,10 @@ class Window:
                 
             fft_output = np.abs(np.fft.rfft(audio_samples))    
             
+            if fft_output[-1] < 1.0: #remove artifacts at edge of sample range
+                fft_output[-1] = 1.0
+            
             #shift in next fft slice
-            #np.delete(self.fft_data, 0, axis=0)
-            #self.fft_data = np.column_stack([self.fft_data, fft_output])
             self.fft_data = self.fft_data[1:] #delete last row
             self.fft_data.append(fft_output)
             
@@ -231,12 +239,7 @@ class Window:
         self.window.after(50, self.do_fft)
     
     def animate_plot(self, *args):
-        print("animating")
-        
         self.fft_im.set_array(self.fft_data)
-        #self.fft_im.set_array(np.random.rand(100,100))
-        
-        return [self.fft_im]
     
     def close_window(self):
         self.running = False
