@@ -25,7 +25,7 @@ sd.default.latency = 'low'
 SAMPLE_RATE = 7000
 SAMPLES_PER_LOOP = 512
 WINDOW_LENGTH = 200
-ANIMATION_INTERVAL = 200
+ANIMATION_INTERVAL = 250
 
 FFT_MIN = 1
 FFT_MAX = 1e10
@@ -287,11 +287,13 @@ class Window:
                     
                 fft_output = np.abs(np.fft.rfft(audio_samples))    
                 
-                #remove artifacts at nyquest and 1/2 nyquest
+                #remove artifacts at fractions of nyquest frequency
                 if fft_output[-1] < 1.0:
                     fft_output[-1] = 1.0
                 if fft_output[SAMPLES_PER_LOOP // 4] < 1.0:
                     fft_output[SAMPLES_PER_LOOP // 4] = 1.0
+                if fft_output[0] < 1.0:
+                    fft_output[0] = 1.0
                 
                 #shift in next fft slice
                 self.fft_data = self.fft_data[1:] #delete last row
