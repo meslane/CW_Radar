@@ -51,6 +51,8 @@ class Window:
         self.speed_selection = tk.IntVar()
         self.speed_selection.set(1)
         
+        #math stuff
+        self.carrier_freq = 0.0
         self.velocity_ms = 0.0 #velocity in meters per second
         self.units = "m/s"
         
@@ -180,7 +182,9 @@ class Window:
             fft_output = np.abs(np.fft.rfft(audio_samples))    
             
             max_tone = np.argmax(fft_output) * (sample_rate/samples_per_loop) #get freq of hightest amplitude
-            velocity = (3e8 * max_tone) / (2 * F_0)
+            
+            self.carrier_freq = (int(self.freq_ghz.get()) * 1e9) + (int(self.freq_mhz.get()) * 1e6) + (int(self.freq_khz.get()) * 1e3)
+            velocity = (3e8 * max_tone) / (2 * self.carrier_freq)
             
             if np.max(fft_output) >= (10 ** self.detection_threshold.get()): #only update if above threshold
                 self.velocity_ms = velocity
