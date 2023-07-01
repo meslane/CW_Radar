@@ -3,7 +3,13 @@ import numpy as np
 import scipy
 
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import (
+    FigureCanvasTkAgg, NavigationToolbar2Tk)
+from matplotlib.backend_bases import key_press_handler
+from matplotlib.figure import Figure
 import matplotlib.animation as animation
+from matplotlib import style
+from matplotlib import colors
 
 import pyaudio
 import sounddevice as sd
@@ -16,11 +22,8 @@ from tkinter import ttk
 
 sd.default.latency = 'low'
 
-sample_rate = 11025
-samples_per_loop = 1024
-loops_per_draw = 1
-
-F_0 = 3.4e9 #CW frequency
+SAMPLE_RATE = 11025
+SAMPLES_PER_LOOP = 1024
 
 FFT_MIN = 1
 FFT_MAX = 1e10
@@ -59,6 +62,26 @@ class Window:
         #queues
         self.running = True
         self.audio_queue = queue.Queue()
+        
+        #fft waterfall display
+        self.fft_plot = Figure(figsize=(16, 9), dpi=50)
+        self.fft_plot.tight_layout()
+        self.fft_ax = self.fft_plot.add_subplot(1,1,1)
+        self.fft_canvas = FigureCanvasTkAgg(self.fft_plot, self.window)
+        self.fft_canvas.get_tk_widget().grid(column=0,row=0,rowspan=3)
+        self.fft_animation = animation.FuncAnimation(self.fft_plot, self.animate_plot, interval=1000)
+        
+        self.fft_data = []#np.random.rand(SAMPLES_PER_LOOP // 2 + 1,1000)
+        
+        for x in range(200):
+            self.fft_data.append([])
+            for y in range(SAMPLES_PER_LOOP // 2 + 1):
+                self.fft_data[x].append(0.1)
+        
+        self.fft_im = self.fft_ax.imshow(self.fft_data, 
+                                            interpolation='none', 
+                                            animated = True,
+                                            norm=colors.LogNorm(vmin=1, vmax=1e10))
         
         #widgets
         #threshold
@@ -163,7 +186,7 @@ class Window:
 
     def audio_thread(self):
         while self.running:
-            audio_data = self.stream.read(samples_per_loop, exception_on_overflow = True)
+            audio_data = self.stream.read(SAMPLES_PER_LOOP, exception_on_overflow = True)
             self.audio_queue.put(audio_data)
     
     def do_fft(self):
@@ -176,12 +199,18 @@ class Window:
             
             data = self.audio_queue.get()
             
-            for i in range(samples_per_loop):
+            for i in range(SAMPLES_PER_LOOP):
                 audio_samples.append(int.from_bytes(data[(i*2):(i*2)+2], "little", signed=True))
                 
             fft_output = np.abs(np.fft.rfft(audio_samples))    
             
-            max_tone = np.argmax(fft_output) * (sample_rate/samples_per_loop) #get freq of hightest amplitude
+            #shift in next fft slice
+            #np.delete(self.fft_data, 0, axis=0)
+            #self.fft_data = np.column_stack([self.fft_data, fft_output])
+            self.fft_data = self.fft_data[1:] #delete last row
+            self.fft_data.append(fft_output)
+            
+            max_tone = np.argmax(fft_output) * (SAMPLE_RATE/SAMPLES_PER_LOOP) #get freq of hightest amplitude
             
             self.carrier_freq = (int(self.freq_ghz.get()) * 1e9) + (int(self.freq_mhz.get()) * 1e6) + (int(self.freq_khz.get()) * 1e3)
             velocity = (3e8 * max_tone) / (2 * self.carrier_freq)
@@ -200,6 +229,14 @@ class Window:
             print("empty queue")
         
         self.window.after(50, self.do_fft)
+    
+    def animate_plot(self, *args):
+        print("animating")
+        
+        self.fft_im.set_array(self.fft_data)
+        #self.fft_im.set_array(np.random.rand(100,100))
+        
+        return [self.fft_im]
     
     def close_window(self):
         self.running = False
@@ -221,9 +258,9 @@ def main():
 
     stream = audio.open(format = pyaudio.paInt16,
         channels = 1,
-        rate = sample_rate, #sample rate
+        rate = SAMPLE_RATE, #sample rate
         input = True,
-        frames_per_buffer = sample_rate,
+        frames_per_buffer = SAMPLE_RATE,
         input_device_index = input_device)
 
     root = tk.Tk()
