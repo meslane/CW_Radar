@@ -25,9 +25,12 @@ sd.default.latency = 'low'
 SAMPLE_RATE = 7000
 SAMPLES_PER_LOOP = 512
 WINDOW_LENGTH = 200
+ANIMATION_INTERVAL = 200
 
 FFT_MIN = 1
 FFT_MAX = 1e10
+
+TKINTER_STICKY = "NSEW"
 
 class Selector:
     def __init__(self, window, audio):
@@ -51,7 +54,7 @@ class Selector:
         
         self.widgets['Dropdown'] = tk.OptionMenu(self.window, self.selection, *self.devices)
         self.widgets['Dropdown'].config(width=40)
-        self.widgets['Dropdown'].grid(row=1,column=0)
+        self.widgets['Dropdown'].grid(row=1,column=0, padx=10)
         
         self.widgets['Button'] = tk.Button(self.window, text="Select Device", command=self.button_press)
         self.widgets['Button'].grid(row=3,column=0)
@@ -104,6 +107,9 @@ class Window:
         self.running = True
         self.audio_queue = queue.Queue()
         
+        #area for resizing
+        self.last_area = self.window_area()
+        
         #fft waterfall display
         plt.rcParams.update({'font.size': 20})
         
@@ -113,8 +119,10 @@ class Window:
         self.fft_ax.set_ylabel('Time (s)')
         self.fft_ax.set_xlabel('Frequency (Hz)')
         self.fft_canvas = FigureCanvasTkAgg(self.fft_plot, self.window)
-        self.fft_canvas.get_tk_widget().grid(column=0,row=0,rowspan=3)
-        self.fft_animation = animation.FuncAnimation(self.fft_plot, self.animate_plot, interval=250)
+        self.fft_canvas.get_tk_widget().grid(column=0,row=0,rowspan=3,sticky=TKINTER_STICKY)
+        self.fft_animation = animation.FuncAnimation(self.fft_plot, self.animate_plot, interval=ANIMATION_INTERVAL, blit=False)
+        
+        self.animation_iter = 0
         
         #init fft data array
         self.fft_data = []
@@ -134,7 +142,7 @@ class Window:
         #widgets
         #threshold
         self.widgets['Thresh_frame'] = tk.Frame(self.window,highlightbackground="black",highlightthickness=2)
-        self.widgets['Thresh_frame'].grid(row=0,column=1,padx=10, pady=10)
+        self.widgets['Thresh_frame'].grid(row=0,column=1,padx=10,pady=10,sticky=TKINTER_STICKY)
         
         self.widgets['Threshold_title'] = tk.Label(self.widgets['Thresh_frame'], text="Threshold", font=("Arial",20))
         self.widgets['Threshold_title'].grid(row=0,column=0)
@@ -146,11 +154,13 @@ class Window:
                                              orient = tk.HORIZONTAL,
                                              length = 200,
                                              font=("Arial",15))
-        self.widgets['Threshold'].grid(row=1,column=0)
+        self.widgets['Threshold'].grid(row=1,column=0,sticky=TKINTER_STICKY)
+        
+        tk.Grid.columnconfigure(self.widgets['Thresh_frame'],0,weight=1)
         
         #frequency selector
         self.widgets['Freq_frame'] = tk.Frame(self.window,highlightbackground="black",highlightthickness=2)
-        self.widgets['Freq_frame'].grid(row=1,column=1,padx=10, pady=10)
+        self.widgets['Freq_frame'].grid(row=1,column=1,padx=10,pady=10,sticky=TKINTER_STICKY)
         
         self.widgets['Freq_label'] = tk.Label(self.widgets['Freq_frame'], text="Carrier Frequency", font=("Arial",20))
         self.widgets['Freq_label'].grid(row=0,column=0, columnspan=5)
@@ -196,9 +206,15 @@ class Window:
                                                 font=("Arial",20))
         self.widgets['Freq_khz'].grid(row=2,column=4)
         
+        tk.Grid.columnconfigure(self.widgets['Freq_frame'],0,weight=1) #make sure it is centered
+        tk.Grid.columnconfigure(self.widgets['Freq_frame'],1,weight=1)
+        tk.Grid.columnconfigure(self.widgets['Freq_frame'],2,weight=1)
+        tk.Grid.columnconfigure(self.widgets['Freq_frame'],3,weight=1)
+        tk.Grid.columnconfigure(self.widgets['Freq_frame'],4,weight=1)
+        
         #mph display
         self.widgets['Speed_frame'] = tk.Frame(self.window,highlightbackground="black",highlightthickness=2)
-        self.widgets['Speed_frame'].grid(row=2,column=1,padx=10, pady=10)
+        self.widgets['Speed_frame'].grid(row=2,column=1,padx=10,pady=10,sticky=TKINTER_STICKY)
         
         self.widgets['Speed_label'] = tk.Label(self.widgets['Speed_frame'], text="Target Velocity", font=("Arial",20))
         self.widgets['Speed_label'].grid(row=0,column=0,columnspan=2)
@@ -223,11 +239,14 @@ class Window:
                                                             font=("Arial",15),
                                                             variable=self.speed_selection,
                                                             value=2)
-        self.widgets['Speed_select_mph'].grid(row=2,column=1)
+        self.widgets['Speed_select_mph'].grid(row=2,column=1)\
+        
+        tk.Grid.columnconfigure(self.widgets['Speed_frame'],0,weight=1) #make sure it is centered
+        tk.Grid.columnconfigure(self.widgets['Speed_frame'],1,weight=1)
         
         #bottom buttons
         self.widgets['Button_frame'] = tk.Frame(self.window)
-        self.widgets['Button_frame'].grid(row=4,column=0,padx=10, pady=10)
+        self.widgets['Button_frame'].grid(row=4,column=0,padx=10,pady=10,sticky=TKINTER_STICKY)
         
         self.widgets['Pause_button'] = tk.Button(self.widgets['Button_frame'], 
                                                     text="Pause", 
@@ -235,6 +254,7 @@ class Window:
                                                     font=("Arial",15),
                                                     command=self.pause_button)
         self.widgets['Pause_button'].grid(row=0,column=0)
+        tk.Grid.columnconfigure(self.widgets['Button_frame'],0,weight=1)
         
         #start audio thread
         self.thread = threading.Thread(target=self.audio_thread)
@@ -254,7 +274,10 @@ class Window:
         fft_output = []
     
         if not self.audio_queue.empty():
-            #print(self.audio_queue.qsize())
+            queue_size = self.audio_queue.qsize()
+            
+            if (queue_size > 20):
+                print("WARNING: audio queue backup (len = {})".format(queue_size))
             
             data = self.audio_queue.get()
             
@@ -264,39 +287,39 @@ class Window:
                     
                 fft_output = np.abs(np.fft.rfft(audio_samples))    
                 
-                if fft_output[-1] < 1.0: #remove artifacts at nyquest and 1/2 nyquest
+                #remove artifacts at nyquest and 1/2 nyquest
+                if fft_output[-1] < 1.0:
                     fft_output[-1] = 1.0
                 if fft_output[SAMPLES_PER_LOOP // 4] < 1.0:
                     fft_output[SAMPLES_PER_LOOP // 4] = 1.0
-                
                 
                 #shift in next fft slice
                 self.fft_data = self.fft_data[1:] #delete last row
                 self.fft_data.append(fft_output)
                 
-                max_tone = np.argmax(fft_output) * (SAMPLE_RATE/SAMPLES_PER_LOOP) #get freq of hightest amplitude
+                fft_no_DC = fft_output[1:] #don't consider DC point in fft calculation
+                
+                max_tone = np.argmax(fft_no_DC) * (SAMPLE_RATE/SAMPLES_PER_LOOP) #get freq of hightest amplitude
                 
                 self.carrier_freq = (int(self.freq_ghz.get()) * 1e9) + (int(self.freq_mhz.get()) * 1e6) + (int(self.freq_khz.get()) * 1e3)
                 velocity = (3e8 * max_tone) / (2 * self.carrier_freq)
                 
-                if np.max(fft_output) >= (10 ** self.detection_threshold.get()): #only update if above threshold
+                if np.max(fft_no_DC) >= (10 ** self.detection_threshold.get()): #only update if above threshold
                     self.velocity_ms = velocity
-                
+        
+        #velocity display
         if self.speed_selection.get() == 1:
             self.units = "m/s"
             self.speed_display.set("{:.2f} {}".format(self.velocity_ms, self.units)) #m/s
         elif self.speed_selection.get() == 2:
             self.units = "mph"
             self.speed_display.set("{:.2f} {}".format(self.velocity_ms * 2.237, self.units)) #mph
-            
-        else:
-            #print("empty queue")
-            pass
         
         self.window.after(50, self.do_fft)
     
     def animate_plot(self, *args):
         self.fft_im.set_array(self.fft_data)
+        self.animation_iter += 1
     
     def pause_button(self):
         if self.paused:
@@ -305,6 +328,19 @@ class Window:
         else:
             self.paused = True
             self.widgets['Pause_button'].configure(text="Resume")
+    
+    def window_area(self):
+        return self.window.winfo_height() * self.window.winfo_width()
+    
+    def on_resize(self, event): #scale fft animation speed on resize
+        if (event.widget == self.window and (self.window_area() != self.last_area)): #if window resized
+            self.last_area = self.window_area()
+            
+            new_interval = int(ANIMATION_INTERVAL * (self.window_area() / 726000)) #scale with window size to avoid overflows
+            self.fft_animation.pause() #NEED THIS OR IT KEEPS PLAYING UNTIL GARBAGE COLLECTED
+            self.fft_animation = animation.FuncAnimation(self.fft_plot, self.animate_plot, interval=new_interval, blit=False)
+            
+            print("new interval = {}".format(new_interval))
     
     def close_window(self):
         self.running = False
@@ -324,8 +360,16 @@ def main():
 
     #main window
     root = tk.Tk()
+    
+    #configure resizing weights
+    tk.Grid.columnconfigure(root,0,weight=1)
+    tk.Grid.rowconfigure(root,0,weight=1)
+    tk.Grid.rowconfigure(root,1,weight=1)
+    tk.Grid.rowconfigure(root,2,weight=1)
+
     root.title("Radar")
     window = Window(root, stream)
+    root.bind("<Configure>", window.on_resize)
     root.protocol("WM_DELETE_WINDOW", window.close_window)
     root.mainloop()
 
