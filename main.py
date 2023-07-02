@@ -12,24 +12,17 @@ from matplotlib import style
 from matplotlib import colors
 
 import pyaudio
-import sounddevice as sd
-
-'''
-import threading
-import queue
-'''
 
 from multiprocessing import Process, Queue
 
 import tkinter as tk
-from tkinter import ttk
 
-sd.default.latency = 'low'
+SAMPLE_RATE = 10000
+SAMPLES_PER_LOOP = 512
+WINDOW_LENGTH = 140
+ANIMATION_INTERVAL = 300
 
-SAMPLE_RATE = 8000
-SAMPLES_PER_LOOP = 256
-WINDOW_LENGTH = 200
-ANIMATION_INTERVAL = 400
+FFT_DISPLAY_BINS = SAMPLES_PER_LOOP // 4
 
 FFT_MIN = 1
 FFT_MAX = 1e10
@@ -45,7 +38,7 @@ class Selector:
         self.selection = tk.StringVar()
         
         self.audio = audio
-        self.stream = None
+        self.stream_id = None
         
         info = self.audio.get_host_api_info_by_index(0)
         numdevices = info.get('deviceCount')
@@ -65,13 +58,7 @@ class Selector:
         
     def button_press(self):
         if self.selection.get():
-            self.stream = self.audio.open(format = pyaudio.paInt16,
-            channels = 1,
-            rate = SAMPLE_RATE, #sample rate
-            input = True,
-            frames_per_buffer = SAMPLE_RATE,
-            input_device_index = int(self.selection.get()[0]))
-            
+            self.stream_id = int(self.selection.get()[0])
             self.window.destroy()
         
 
@@ -152,7 +139,7 @@ class Window:
         self.fft_data = []
         for x in range(WINDOW_LENGTH):
             self.fft_data.append([])
-            for y in range(SAMPLES_PER_LOOP // 2 + 1):
+            for y in range(FFT_DISPLAY_BINS):
                 self.fft_data[x].append(0.1)
         
         self.fft_im = self.fft_ax.imshow(self.fft_data, 
@@ -161,7 +148,8 @@ class Window:
                                             norm=colors.LogNorm(vmin=1, vmax=FFT_MAX),
                                             aspect='auto',
                                             origin='lower',
-                                            extent=[0, SAMPLE_RATE // 2, (SAMPLES_PER_LOOP/SAMPLE_RATE) * WINDOW_LENGTH, 0])
+                                            extent=[0, int((SAMPLE_RATE) * (FFT_DISPLAY_BINS/SAMPLES_PER_LOOP)), 
+                                                    (SAMPLES_PER_LOOP/SAMPLE_RATE) * WINDOW_LENGTH, 0])
         
         #widgets
         #threshold
@@ -324,6 +312,8 @@ class Window:
                 if fft_output[0] < 1.0:
                     fft_output[0] = 1.0
                 
+                fft_output = fft_output[0:FFT_DISPLAY_BINS] #trim fft
+                
                 #shift in next fft slice
                 self.fft_data = self.fft_data[1:] #delete last row
                 self.fft_data.append(fft_output)
@@ -346,7 +336,7 @@ class Window:
             self.units = "mph"
             self.speed_display.set("{:.2f} {}".format(self.velocity_ms * 2.237, self.units)) #mph
         
-        self.window.after(50, self.do_fft)
+        self.window.after(int((SAMPLES_PER_LOOP/SAMPLE_RATE) * 500), self.do_fft)
     
     def animate_plot(self, *args):
         self.fft_im.set_array(self.fft_data)
@@ -407,14 +397,12 @@ def main():
     #audio device setup
     audio = pyaudio.PyAudio()
     
-    '''
     root = tk.Tk()
     root.title("Radar")
     select_window = Selector(root, audio)
     root.mainloop()
 
-    stream = select_window.stream
-    '''
+    stream_id = select_window.stream_id
 
     #main window
     root = tk.Tk()
@@ -426,7 +414,7 @@ def main():
     tk.Grid.rowconfigure(root,2,weight=1)
 
     root.title("Radar")
-    window = Window(root, 0)
+    window = Window(root, stream_id)
     root.bind("<Configure>", window.on_resize)
     root.protocol("WM_DELETE_WINDOW", window.close_window)
     root.mainloop()
