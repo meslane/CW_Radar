@@ -253,8 +253,17 @@ class Window:
                                                     width=15,
                                                     font=("Arial",15),
                                                     command=self.pause_button)
-        self.widgets['Pause_button'].grid(row=0,column=0)
+        self.widgets['Pause_button'].grid(row=0,column=1)
+        
+        self.widgets['Save_button'] = tk.Button(self.widgets['Button_frame'], 
+                                                    text="Save", 
+                                                    width=15,
+                                                    font=("Arial",15),
+                                                    command=self.save_image)
+        self.widgets['Save_button'].grid(row=0,column=0)
+        
         tk.Grid.columnconfigure(self.widgets['Button_frame'],0,weight=1)
+        tk.Grid.columnconfigure(self.widgets['Button_frame'],1,weight=1)
         
         #start audio thread
         self.thread = threading.Thread(target=self.audio_thread)
@@ -330,6 +339,30 @@ class Window:
         else:
             self.paused = True
             self.widgets['Pause_button'].configure(text="Resume")
+    
+    def save_image(self): #yoinked this one from senior design code
+        file_dialog = tk.Toplevel(self.window)
+        imgname = tk.StringVar()
+    
+        def save():
+            filename = 'images/{}.png'.format(imgname.get())
+            self.fft_plot.savefig(filename) #TODO: set this so you can select the file name
+            file_dialog.destroy()
+        
+        file_dialog.geometry('250x100')
+        file_dialog.title('Save Waterfall')
+        
+        file_dialog.grid_rowconfigure(0, weight=1)
+        file_dialog.grid_columnconfigure(0, weight=1)
+        
+        savelabel = tk.Label(file_dialog, text="Filename:", font=("Arial", 12))
+        savelabel.grid(row=0,column=0,padx=5,pady=0)
+        savetext = tk.Entry(file_dialog, textvariable=imgname, width = 30)
+        savetext.grid(row=1,column=0,padx=5,pady=5)
+        savetext.grid_rowconfigure(1, weight=1)
+        savebutton = tk.Button(file_dialog,text = "Save", command=save, width = 20, height = 1, bg='#c5e6e1')
+        savebutton.grid(row=2,column=0,padx=5,pady=5)
+        savebutton.grid_rowconfigure(1, weight=1)
     
     def window_area(self):
         return self.window.winfo_height() * self.window.winfo_width()
