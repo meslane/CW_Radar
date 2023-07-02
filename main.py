@@ -14,18 +14,22 @@ from matplotlib import colors
 import pyaudio
 import sounddevice as sd
 
+'''
 import threading
 import queue
+'''
+
+from multiprocessing import Process, Queue
 
 import tkinter as tk
 from tkinter import ttk
 
 sd.default.latency = 'low'
 
-SAMPLE_RATE = 7000
-SAMPLES_PER_LOOP = 512
+SAMPLE_RATE = 8000
+SAMPLES_PER_LOOP = 256
 WINDOW_LENGTH = 200
-ANIMATION_INTERVAL = 250
+ANIMATION_INTERVAL = 400
 
 FFT_MIN = 1
 FFT_MAX = 1e10
@@ -71,13 +75,32 @@ class Selector:
             self.window.destroy()
         
 
+def audio_thread(stream_id, audio_queue, close_queue):
+    audio = pyaudio.PyAudio()
+
+    #open audio device
+    stream = audio.open(format = pyaudio.paInt16,
+    channels = 1,
+    rate = SAMPLE_RATE, #sample rate
+    input = True,
+    frames_per_buffer = SAMPLE_RATE,
+    input_device_index = stream_id)
+
+    while close_queue.empty():
+        audio_data = stream.read(SAMPLES_PER_LOOP, exception_on_overflow = False)
+        audio_queue.put(audio_data)
+        
+    #print("Ending thread!")
+    stream.close()
+    return
+
 class Window:
-    def __init__(self, window, stream):
+    def __init__(self, window, stream_id):
         self.window = window
         self.widgets = {}
         
-        self.audio = pyaudio.PyAudio()
-        self.stream = stream
+        #self.audio = pyaudio.PyAudio()
+        #self.stream = stream
         
         #variables
         self.detection_threshold = tk.IntVar()
@@ -105,7 +128,8 @@ class Window:
         #queues
         self.paused = False
         self.running = True
-        self.audio_queue = queue.Queue()
+        self.audio_queue = Queue()
+        self.close_queue = Queue()
         
         #area for resizing
         self.last_area = self.window_area()
@@ -239,7 +263,7 @@ class Window:
                                                             font=("Arial",15),
                                                             variable=self.speed_selection,
                                                             value=2)
-        self.widgets['Speed_select_mph'].grid(row=2,column=1)\
+        self.widgets['Speed_select_mph'].grid(row=2,column=1)
         
         tk.Grid.columnconfigure(self.widgets['Speed_frame'],0,weight=1) #make sure it is centered
         tk.Grid.columnconfigure(self.widgets['Speed_frame'],1,weight=1)
@@ -266,16 +290,12 @@ class Window:
         tk.Grid.columnconfigure(self.widgets['Button_frame'],1,weight=1)
         
         #start audio thread
-        self.thread = threading.Thread(target=self.audio_thread)
+        #self.thread = threading.Thread(target=self.audio_thread)
+        self.thread = Process(target=audio_thread, args=(stream_id,self.audio_queue,self.close_queue))
         self.thread.start()
         
         #function calls
         self.do_fft()
-
-    def audio_thread(self):
-        while self.running:
-            audio_data = self.stream.read(SAMPLES_PER_LOOP, exception_on_overflow = False)
-            self.audio_queue.put(audio_data)
     
     def do_fft(self):
         data = []
@@ -379,19 +399,22 @@ class Window:
     
     def close_window(self):
         self.running = False
-        self.thread.join()
+        self.close_queue.put(1)
+        self.thread.terminate()
         self.window.destroy()
    
 def main():
     #audio device setup
     audio = pyaudio.PyAudio()
     
+    '''
     root = tk.Tk()
     root.title("Radar")
     select_window = Selector(root, audio)
     root.mainloop()
 
     stream = select_window.stream
+    '''
 
     #main window
     root = tk.Tk()
@@ -403,7 +426,7 @@ def main():
     tk.Grid.rowconfigure(root,2,weight=1)
 
     root.title("Radar")
-    window = Window(root, stream)
+    window = Window(root, 0)
     root.bind("<Configure>", window.on_resize)
     root.protocol("WM_DELETE_WINDOW", window.close_window)
     root.mainloop()
