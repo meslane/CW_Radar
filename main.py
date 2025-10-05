@@ -337,7 +337,7 @@ class Window:
             self.speed_display.set("{:.2f} {}".format(self.velocity_ms * 2.237, self.units)) #mph
         
         #update x-axis with speed ticks
-        tick_locs = [0, 500, 1000, 1500, 2000, 2500]
+        tick_locs = [0, 250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500]
         speed_ticks = []
         
         if self.units == "m/s":
