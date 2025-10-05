@@ -25,12 +25,12 @@ ANIMATION_INTERVAL = 300
 FFT_DISPLAY_BINS = SAMPLES_PER_LOOP // 4
 
 FFT_MIN = 1
-FFT_MAX = 1e10
+FFT_MAX = 1e8
 
 TKINTER_STICKY = "NSEW"
 
 class Selector:
-    def __init__(self, window, audio):
+    def __init__(self, window, audio): 
         self.window = window
         self.widgets = {}
         
@@ -97,8 +97,8 @@ class Window:
         self.freq_mhz = tk.StringVar()
         self.freq_khz = tk.StringVar()
         
-        self.freq_ghz.set('03')
-        self.freq_mhz.set('400')
+        self.freq_ghz.set('05')
+        self.freq_mhz.set('750')
         self.freq_khz.set('000')
         
         self.speed_display = tk.StringVar()
@@ -128,7 +128,7 @@ class Window:
         self.fft_plot.set_tight_layout(True)
         self.fft_ax = self.fft_plot.add_subplot(1,1,1)
         self.fft_ax.set_ylabel('Time (s)')
-        self.fft_ax.set_xlabel('Frequency (Hz)')
+        self.fft_ax.set_xlabel('Velocity (m/s)')
         self.fft_canvas = FigureCanvasTkAgg(self.fft_plot, self.window)
         self.fft_canvas.get_tk_widget().grid(column=0,row=0,rowspan=3,sticky=TKINTER_STICKY)
         self.fft_animation = animation.FuncAnimation(self.fft_plot, self.animate_plot, interval=ANIMATION_INTERVAL, blit=False)
@@ -320,7 +320,7 @@ class Window:
                 
                 fft_no_DC = fft_output[1:] #don't consider DC point in fft calculation
                 
-                max_tone = np.argmax(fft_no_DC) * (SAMPLE_RATE/SAMPLES_PER_LOOP) #get freq of hightest amplitude
+                max_tone = (np.argmax(fft_no_DC) + 1) * (SAMPLE_RATE/SAMPLES_PER_LOOP) #get freq of hightest amplitude
                 
                 self.carrier_freq = (int(self.freq_ghz.get()) * 1e9) + (int(self.freq_mhz.get()) * 1e6) + (int(self.freq_khz.get()) * 1e3)
                 velocity = (3e8 * max_tone) / (2 * self.carrier_freq)
@@ -335,6 +335,21 @@ class Window:
         elif self.speed_selection.get() == 2:
             self.units = "mph"
             self.speed_display.set("{:.2f} {}".format(self.velocity_ms * 2.237, self.units)) #mph
+        
+        #update x-axis with speed ticks
+        tick_locs = [0, 500, 1000, 1500, 2000, 2500]
+        speed_ticks = []
+        
+        if self.units == "m/s":
+            for tick in tick_locs:
+                speed_ticks.append(round((3e8 * tick) / (2 * self.carrier_freq + 1), 1))
+            self.fft_ax.set_xlabel('Velocity (m/s)')
+        elif self.units == "mph":
+            for tick in tick_locs:
+                speed_ticks.append(round((3e8 * tick) / (2 * self.carrier_freq + 1) * 2.237, 1))
+            self.fft_ax.set_xlabel('Velocity (mph)')
+        
+        self.fft_ax.set_xticks(tick_locs, speed_ticks)
         
         self.window.after(int((SAMPLES_PER_LOOP/SAMPLE_RATE) * 500), self.do_fft)
     
