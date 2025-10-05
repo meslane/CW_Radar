@@ -18,14 +18,14 @@ from multiprocessing import Process, Queue
 import tkinter as tk
 
 SAMPLE_RATE = 10000
-SAMPLES_PER_LOOP = 512
+SAMPLES_PER_LOOP = 1024
 WINDOW_LENGTH = 140
 ANIMATION_INTERVAL = 300
 
 FFT_DISPLAY_BINS = SAMPLES_PER_LOOP // 4
 
-FFT_MIN = 1
-FFT_MAX = 1e8
+FFT_MIN = 1e4
+FFT_MAX = 1e7
 
 TKINTER_STICKY = "NSEW"
 
@@ -128,7 +128,7 @@ class Window:
         self.fft_plot.set_tight_layout(True)
         self.fft_ax = self.fft_plot.add_subplot(1,1,1)
         self.fft_ax.set_ylabel('Time (s)')
-        self.fft_ax.set_xlabel('Velocity (m/s)')
+        self.fft_ax.set_xlabel('Relative Velocity (m/s)')
         self.fft_canvas = FigureCanvasTkAgg(self.fft_plot, self.window)
         self.fft_canvas.get_tk_widget().grid(column=0,row=0,rowspan=3,sticky=TKINTER_STICKY)
         self.fft_animation = animation.FuncAnimation(self.fft_plot, self.animate_plot, interval=ANIMATION_INTERVAL, blit=False)
@@ -145,7 +145,7 @@ class Window:
         self.fft_im = self.fft_ax.imshow(self.fft_data, 
                                             interpolation='none', 
                                             animated = True,
-                                            norm=colors.LogNorm(vmin=1, vmax=FFT_MAX),
+                                            norm=colors.LogNorm(vmin=FFT_MIN, vmax=FFT_MAX),
                                             aspect='auto',
                                             origin='lower',
                                             extent=[0, int((SAMPLE_RATE) * (FFT_DISPLAY_BINS/SAMPLES_PER_LOOP)), 
@@ -342,12 +342,12 @@ class Window:
         
         if self.units == "m/s":
             for tick in tick_locs:
-                speed_ticks.append(round((3e8 * tick) / (2 * self.carrier_freq + 1), 1))
-            self.fft_ax.set_xlabel('Velocity (m/s)')
+                speed_ticks.append(int(round((3e8 * tick) / (2 * self.carrier_freq + 1), 0)))
+            self.fft_ax.set_xlabel('Relative Velocity (m/s)')
         elif self.units == "mph":
             for tick in tick_locs:
-                speed_ticks.append(round((3e8 * tick) / (2 * self.carrier_freq + 1) * 2.237, 1))
-            self.fft_ax.set_xlabel('Velocity (mph)')
+                speed_ticks.append(int(round((3e8 * tick) / (2 * self.carrier_freq + 1) * 2.237, 0)))
+            self.fft_ax.set_xlabel('Relative Velocity (mph)')
         
         self.fft_ax.set_xticks(tick_locs, speed_ticks)
         
