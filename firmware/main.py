@@ -239,7 +239,7 @@ class LMX2594(SPI_Device):
         reg_dict["PFD_DLY_SEL"] = get_bits(regs[37], [8,13])
         reg_dict["PLL_DEN"] = (regs[38] << 16) | regs[39]
         reg_dict["MASH_SEED"] = (regs[41] << 16) | regs[40]
-        reg_dict["PLL_NUM"] = (regs[43] << 16) | regs[42]
+        reg_dict["PLL_NUM"] = (regs[42] << 16) | regs[43]
         reg_dict["OUTA_PWR"] = get_bits(regs[44], [8,13])
         reg_dict["OUTB_PD"] = get_bits(regs[44], [7,7])
         reg_dict["OUTA_PD"] = get_bits(regs[44], [6,6])
@@ -315,7 +315,7 @@ class LMX2594(SPI_Device):
         
         return reg_dict
     
-    def set_rf_output_mux(self, output, source):
+    def set_rf_output_mux(self, output: int, source: int):
         '''
         Set the source for the selected output
         
@@ -332,6 +332,67 @@ class LMX2594(SPI_Device):
             self.modify(45, [11,12], source)
         elif output == 1:
             self.modify(46, [0,1], source)
+            
+    def enable_calibration(self, cal: int):
+        '''
+        Enable/disable VCO calibration
+        
+        cal:
+            1 = enable calibration
+            0 = disable calibration (default on reset)
+        '''
+        assert cal in [0,1]
+        
+        self.modify(0, [3,3], cal)
+        
+    def calc_f_vco(self, f_osc_in: float):
+        '''
+        Calculate expected VCO frequency given a known reference freq
+        
+        f_osc_in: reference input frequency in Hz
+        '''
+        f_pd = f_osc_in
+        
+        inp_regs = self.read_input_regs()
+        outp_regs = self.read_divider_output_regs()
+        
+        f_pd *= (inp_regs['OSC_2X'] + 1)
+        f_pd /= inp_regs['PLL_R_PRE']
+        f_pd *= inp_regs['MULT']
+        f_pd /= inp_regs['PLL_R']
+        
+        f_vco = f_pd * (outp_regs['PLL_N'] + (outp_regs['PLL_NUM']/outp_regs['PLL_DEN']))
+        
+        return f_vco
+    
+    def program_dividers(self, N: int, num: int, denom: int):
+        '''
+        Load, N, numerator, and denominator values in order into the divier
+        f_VCO = f_pd * (N + (num/denom))
+        
+        N: N divider integer value
+        num: numerator integer value
+        denom: denominator integer value
+        '''
+        #Should write N first per datasheet
+        self.modify(34, [0,2], get_bits(N, [16,18]))
+        self.write(36, (N & 0xFFFF))
+        
+        #Numerator
+        self.write(42, (num >> 16) & 0xFFFF)
+        self.write(43, num & 0xFFFF)
+        
+        #Denominator
+        self.write(38, (denom >> 16) & 0xFFFF)
+        self.write(39, denom & 0xFFFF)
+        
+    def set_input_doubler(self, en):
+        '''
+        Enable/disable the reference frequency doubler
+        '''
+        assert en in [0,1]
+        
+        self.modify(9, [12,12], en)
 
 def main():
     radar_spi = machine.SPI(baudrate=100000,
@@ -353,6 +414,13 @@ def main():
     pll.enable_readback_blind() #enable SPI read
     time.sleep(0.01)
     
+    print("\nSending cal enable")
+    pll.set_input_doubler(1)
+    pll.program_dividers(575, 1, 4294967295)
+    pll.set_rf_output_mux(0, 0) #Set output #2 to use the channel divider, cancels out the x2 input doubler
+    pll.enable_calibration(1)
+    time.sleep(1)
+    
     print(pll.read_lock_status_regs())
     print(pll.read_mash_reset_regs())
     print(pll.read_lock_detect_regs())
@@ -362,6 +430,8 @@ def main():
     print(pll.read_charge_pump_reg())
     print(pll.read_input_regs())
     print(pll.read_general_regs())
+    
+    print(pll.calc_f_vco(10e6)) #This should be 5.75 GHz x 2
     
 if __name__ == "__main__":
     main()
