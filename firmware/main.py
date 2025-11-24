@@ -126,6 +126,14 @@ class LMX2594(SPI_Device):
         '''
         self.write(0x00, 0b0010010000010000)
         
+    def powerdown(self, power: int):
+        '''
+        Take device in/out of low power mode
+        '''
+        assert power in [0,1]
+        
+        self.modify(0, [0,0], power)
+    
     def set_muxout(self, en: int):
         '''
         Sets the MUXOUT_SEL bit to enable/disable register readback over SPI
@@ -348,6 +356,7 @@ class LMX2594(SPI_Device):
     def calc_f_vco(self, f_osc_in: float):
         '''
         Calculate expected VCO frequency given a known reference freq
+        NOTE: this value cannot be < 7.5 GHz or the PLL will not lock!!
         
         f_osc_in: reference input frequency in Hz
         '''
@@ -365,7 +374,7 @@ class LMX2594(SPI_Device):
         
         return f_vco
     
-    def program_dividers(self, N: int, num: int, denom: int):
+    def program_vco_dividers(self, N: int, num: int, denom: int):
         '''
         Load, N, numerator, and denominator values in order into the divier
         f_VCO = f_pd * (N + (num/denom))
@@ -389,10 +398,39 @@ class LMX2594(SPI_Device):
     def set_input_doubler(self, en):
         '''
         Enable/disable the reference frequency doubler
+        
+        en: 1 = enable doubler, 0 = disable doubler
         '''
         assert en in [0,1]
         
         self.modify(9, [12,12], en)
+        
+    def set_output_power(self, output: int, power: int):
+        '''
+        Set output power for selected channel
+        
+        output: 0 = OUTA, 1 = OUTB
+        '''
+        assert output in [0,1]
+        assert 0 <= power <= 31
+        
+        if output == 0:
+            self.modify(44, [8,13], power)
+        elif output == 1:
+            self.modify(45, [0,5], power)
+            
+    def set_channel_divider(self, div_index: int):
+        '''
+        Set the output channel divider
+        
+        div_index: index of the output divider. See datasheet for more info
+        '''
+        assert 0 <= div_index <= 17
+        
+        buffer = int(div_index != 0) #1 if not using index 0 for divide / 2
+        
+        self.modify(31, [14,14], buffer)
+        self.modify(75, [6,10], div_index)
 
 def main():
     radar_spi = machine.SPI(baudrate=100000,
@@ -416,8 +454,10 @@ def main():
     
     print("\nSending cal enable")
     pll.set_input_doubler(1)
-    pll.program_dividers(575, 1, 4294967295)
-    pll.set_rf_output_mux(0, 0) #Set output #2 to use the channel divider, cancels out the x2 input doubler
+    pll.program_vco_dividers(575, 1, 4294967295)
+    pll.set_channel_divider(0) #index 0 = divide by 2
+    pll.set_rf_output_mux(0, 0) #Set output A to use the channel divider, cancels out the x2 input doubler
+    pll.set_output_power(0, 12) #Set output power to meet desired LO input level
     pll.enable_calibration(1)
     time.sleep(1)
     
@@ -432,6 +472,11 @@ def main():
     print(pll.read_general_regs())
     
     print(pll.calc_f_vco(10e6)) #This should be 5.75 GHz x 2
+    
+    input()
+    
+    print("Powering Down")
+    pll.powerdown(1)
     
 if __name__ == "__main__":
     main()
