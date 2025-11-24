@@ -198,7 +198,7 @@ class LMX2594(SPI_Device):
         '''
         Read R14 for charge pump current setting
         
-        Returns: dict containing the GPS register contents
+        Returns: dict containing the CPG register contents
         '''
         r14 = self.read(14)
         
@@ -304,6 +304,103 @@ class LMX2594(SPI_Device):
         
         return {"MASH_RST_COUNT": (r69 << 16) | r70}
     
+    def read_ramp_cal_regs(self):
+        '''
+        Read ramp calibration registers
+        
+        Returns: a dict with relevant fields for R78 - R80
+        '''
+        regs = {}
+        
+        for addr in range(78, 81):
+            regs[addr] = self.read(addr)
+            
+        reg_dict = {}
+        
+        reg_dict["RAMP_THRESH"] = (get_bits(regs[78], [11,11]) << 32) | (regs[79] << 16) | regs[80]
+        reg_dict["QUICK_RECAL_EN"] = get_bits(regs[78], [9,9])
+        reg_dict["VCO_CAPCTRL_STRT"] = get_bits(regs[78], [1,8])
+        
+        return reg_dict
+    
+    def read_ramp_limit_regs(self):
+        '''
+        Read ramp limit registers
+        
+        Returns: a dict with relevant fields for R81 - R86
+        '''
+        regs = {}
+        
+        for addr in range(81,87):
+            regs[addr] = self.read(addr)
+            
+        reg_dict = {}
+        
+        reg_dict["RAMP_LIMIT_HIGH"] = (get_bits(regs[81], [0,0]) << 32) | (regs[82] << 16) | regs[83]
+        reg_dict["RAMP_LIMIT_LOW"] = (get_bits(regs[84], [0,0]) << 32) | (regs[85] << 16) | regs[86]
+        
+        return reg_dict
+    
+    def read_ramp_trigger_regs(self):
+        '''
+        Read ramp tripper, burst, and reset registers
+        
+        Returns: a dict with relevant fields for R96 and R97
+        '''
+        regs = {}
+        
+        for addr in range(96,98):
+            regs[addr] = self.read(addr)
+            
+        reg_dict = {}
+        
+        reg_dict["RAMP_BURST_EN"] = get_bits(regs[96], [15,15])
+        reg_dict["RAMP_BURST_COUNT"] = get_bits(regs[96], [2,14])
+        
+        reg_dict["RAMP0_RST"] = get_bits(regs[97], [15,15])
+        reg_dict["RAMP_TRIGA"] = get_bits(regs[97], [3,6])
+        reg_dict["RAMP_TRIGB"] = get_bits(regs[97], [7,10])
+        reg_dict["RAMP_BURST_TRIG"] = get_bits(regs[97], [0,1])
+        
+        return reg_dict
+    
+    def read_ramp_cfg_regs(self):
+        '''
+        Read ramp configuration registers
+        
+        Returns: a dict with relevant fields for R98 - R106
+        
+        '''
+        regs = {}
+        
+        for addr in range(98,107):
+            regs[addr] = self.read(addr)
+            
+        reg_dict = {}
+        
+        reg_dict["RAMP0_INC"] = (get_bits(regs[98], [2,15]) << 16) | regs[99]
+        reg_dict["RAMP0_DLY"] = get_bits(regs[98], [0,0])
+        reg_dict["RAMP0_LEN"] =  regs[100]
+        
+        reg_dict["RAMP1_DLY"] = get_bits(regs[101], [6,6])
+        reg_dict["RAMP1_RST"] = get_bits(regs[101], [5,5])
+        
+        reg_dict["RAMP0_NEXT"] = get_bits(regs[101], [4,4])
+        reg_dict["RAMP0_NEXT_TRIG"] = get_bits(regs[101], [0,1])
+        
+        reg_dict["RAMP1_INC"] = (get_bits(regs[102], [0,13]) << 16) | regs[103]
+        reg_dict["RAMP1_LEN"] =  regs[104]
+        
+        reg_dict["RAMP_DLY_CNT"] =  get_bits(regs[105], [6,15])
+        reg_dict["RAMP_MANUAL"] =  get_bits(regs[105], [5,5])
+        reg_dict["RAMP1_NEXT"] =  get_bits(regs[105], [4,4])
+        reg_dict["RAMP1_NEXT_TRIG"] =  get_bits(regs[105], [0,1])
+        
+        reg_dict["RAMP_TRIG_CAL"] = get_bits(regs[106], [4,4])
+        reg_dict["RAMP_SCALE_COUNT"] = get_bits(regs[106], [0,2])
+        
+        return reg_dict
+    
     def read_lock_status_regs(self):
         '''
         Read the VCO lock status registers and return their data
@@ -353,23 +450,37 @@ class LMX2594(SPI_Device):
         
         self.modify(0, [3,3], cal)
         
-    def calc_f_vco(self, f_osc_in: float):
+    def calc_f_pd(self, f_osc_in: float):
         '''
-        Calculate expected VCO frequency given a known reference freq
-        NOTE: this value cannot be < 7.5 GHz or the PLL will not lock!!
+        Calculate expected phase detector reference frequency given a known external reference freq
         
         f_osc_in: reference input frequency in Hz
+        
+        Returns: f_pd in Hz
         '''
         f_pd = f_osc_in
         
         inp_regs = self.read_input_regs()
-        outp_regs = self.read_divider_output_regs()
         
         f_pd *= (inp_regs['OSC_2X'] + 1)
         f_pd /= inp_regs['PLL_R_PRE']
         f_pd *= inp_regs['MULT']
         f_pd /= inp_regs['PLL_R']
         
+        return f_pd
+        
+    def calc_f_vco(self, f_osc_in: float):
+        '''
+        Calculate expected VCO frequency given a known reference freq
+        NOTE: this value cannot be < 7.5 GHz or the PLL will not lock!!
+        
+        f_osc_in: reference input frequency in Hz
+        
+        Returns: VCO frequency in Hz
+        '''
+        outp_regs = self.read_divider_output_regs()
+        
+        f_pd = self.calc_f_pd(f_osc_in)
         f_vco = f_pd * (outp_regs['PLL_N'] + (outp_regs['PLL_NUM']/outp_regs['PLL_DEN']))
         
         return f_vco
@@ -431,6 +542,71 @@ class LMX2594(SPI_Device):
         
         self.modify(31, [14,14], buffer)
         self.modify(75, [6,10], div_index)
+        
+    def enable_ramp(self, en: int):
+        '''
+        Enable/disable frequency ramping
+        '''
+        assert en in [0,1]
+        
+        self.modify(0, [15,15], en)
+        
+    def configure_ramp(self, span_hz: float, ramp_len_s: float, f_osc_in: float):
+        '''
+        Helper function to set up for an automatic triangle wave FMCW frequency sweep on RAMP0
+        Right now this does not recalibrate the VCO
+        
+        NOTE: enable_calibration latches the ramp, so FCAL_EN must == 0 when this function is called
+        Setting FCAL_EN = 1 will start the ramp
+        
+        span_hz: total span of sweep in the freuency domain. RAMP_THRESH is set to this value * 2
+        ramp_len_ns: length of time it takes for one ramp to complete in seconds
+        f_osc_in: reference input frequency in Hz
+        f_vco: the CW VCO output frequency in Hz
+        '''
+        f_pd = self.calc_f_pd(f_osc_in)
+        f_vco = self.calc_f_vco(f_osc_in)
+        
+        self.modify(105, [5,5], 0) #Configure for automatic ramping mode
+        self.modify(101, [0,1], 0) #Trigger next ramp on current ramp's timeout
+        self.modify(97, [0,1], 0) #Trigger next ramp burst on ramp transition
+        self.modify(101, [4,4], 0) #RAMP0 comes after RAMP0
+        self.modify(97, [15,15], 1) #Reset ramp at start (required for automatic mode)
+        self.modify(106, [4,4], 0) #No VCO recal after ramp
+        
+        #write ramp params
+        ramp_len = int(ramp_len_s * f_pd) #calc number of cycles to feed into RAMP_LEN
+        ramp_inc = int(span_hz / f_pd * 0x1000000 / ramp_len) #how much to increment numerator each cycle
+        ramp_thresh = int(span_hz * 2 / f_pd * 16777216) #make sure we don't trigger a calibration
+        
+        assert 0x0000 <= ramp_len <= 0xFFFF
+        assert 0x0000 <= ramp_inc <= 0x3FFFFFFF
+        assert 0x0000 <= ramp_thresh <= 0x1FFFFFFF
+        
+        self.modify(98, [2,15], (ramp_inc >> 16) & 0x3FFF)
+        self.write(99, (ramp_inc & 0xFFFF))
+        
+        self.write(100, ramp_len)
+        
+        self.modify(78, [11,11], (ramp_thresh >> 32) & 0x0001)
+        self.write(79, (ramp_thresh >> 16) & 0xFFFF)
+        self.write(80, ramp_thresh & 0xFFFF)
+        
+        #move ramp limits far enough away to not trip them
+        f_high = f_vco + (span_hz * 2)
+        f_low = f_vco - (span_hz * 2)
+        
+        ramp_high = int((f_high - f_vco)/f_pd * 16777216)
+        ramp_low = int(0x200000000 - 16777216 * (f_vco - f_low)/f_pd)
+        
+        #write limit registers
+        self.modify(81, [0,0], (ramp_high >> 32) & 0x0001)
+        self.write(82, (ramp_high >> 16) & 0xFFFF)
+        self.write(83, ramp_high & 0xFFFF)
+        
+        self.modify(84, [0,0], (ramp_low >> 32) & 0x0001)
+        self.write(85, (ramp_low >> 16) & 0xFFFF)
+        self.write(86, ramp_low & 0xFFFF)
 
 def main():
     radar_spi = machine.SPI(baudrate=100000,
@@ -458,10 +634,21 @@ def main():
     pll.set_channel_divider(0) #index 0 = divide by 2
     pll.set_rf_output_mux(0, 0) #Set output A to use the channel divider, cancels out the x2 input doubler
     pll.set_output_power(0, 12) #Set output power to meet desired LO input level
+    pll.enable_calibration(0)
+    
+    time.sleep(0.1)
+    
+    pll.configure_ramp(10e6, 5e-5, 10e6)
+    pll.enable_ramp(1)
     pll.enable_calibration(1)
-    time.sleep(1)
+    
+    time.sleep(0.1)
     
     print(pll.read_lock_status_regs())
+    print(pll.read_ramp_cfg_regs())
+    print(pll.read_ramp_trigger_regs())
+    print(pll.read_ramp_limit_regs())
+    print(pll.read_ramp_cal_regs())
     print(pll.read_mash_reset_regs())
     print(pll.read_lock_detect_regs())
     print(pll.read_sync_reg())
@@ -477,6 +664,7 @@ def main():
     
     print("Powering Down")
     pll.powerdown(1)
+
     
 if __name__ == "__main__":
     main()
