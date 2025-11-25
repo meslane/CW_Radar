@@ -46,8 +46,14 @@ class SPI_Device:
         self.spi.write(byte)
 
 class LMX2594(SPI_Device):
-    def __init__(self, spi: machine.SPI, cs: machine.Pin):
+    def __init__(self, spi: machine.SPI, cs: machine.Pin, f_osc_in: float):
+        '''
+        spi: micropython SPI interface class defining the SPI driver connected to the PLL
+        cs: micropython pin class defining the pin used for the CSB signal
+        f_osc_in: frequency of the PLL reference oscillator in Hz
+        '''
         super().__init__(spi, cs)
+        self.f_osc_in = f_osc_in
     
     def read(self, addr: int):
         '''
@@ -450,15 +456,13 @@ class LMX2594(SPI_Device):
         
         self.modify(0, [3,3], cal)
         
-    def calc_f_pd(self, f_osc_in: float):
+    def calc_f_pd(self):
         '''
         Calculate expected phase detector reference frequency given a known external reference freq
         
-        f_osc_in: reference input frequency in Hz
-        
         Returns: f_pd in Hz
         '''
-        f_pd = f_osc_in
+        f_pd = self.f_osc_in
         
         inp_regs = self.read_input_regs()
         
@@ -469,22 +473,59 @@ class LMX2594(SPI_Device):
         
         return f_pd
         
-    def calc_f_vco(self, f_osc_in: float):
+    def calc_f_vco(self):
         '''
         Calculate expected VCO frequency given a known reference freq
         NOTE: this value cannot be < 7.5 GHz or the PLL will not lock!!
-        
-        f_osc_in: reference input frequency in Hz
         
         Returns: VCO frequency in Hz
         '''
         outp_regs = self.read_divider_output_regs()
         
-        f_pd = self.calc_f_pd(f_osc_in)
+        f_pd = self.calc_f_pd()
         f_vco = f_pd * (outp_regs['PLL_N'] + (outp_regs['PLL_NUM']/outp_regs['PLL_DEN']))
         
         return f_vco
     
+    def calc_f_smclk(self):
+        '''
+        Calculate the system reference clock frequency given a known reference freq
+        
+        Returns: f_smclk frequency in Hz
+        '''
+        clk_div = self.read_general_regs()["CAL_CLK_DIV"]
+        f_smclk = self.f_osc_in / (2 ** clk_div)
+        
+        return f_smclk
+    
+    def set_smclk_div(self, clk_div: int):
+        '''
+        Set the divider for the state machine clock
+        
+        clk_div: clock divider, div = 2^clk_div
+        '''
+        assert 0 <= clk_div <= 3
+        self.modify(1, [0,2], clk_div)
+        
+    def set_vco_recal_delay(self, delay_count: int, scale_count: int):
+        '''
+        Set the recalibration delay/scale count for VCO recalibration in automatic ramping mode
+        
+        Delay = 1/f_smclk * delay_count * 2^(scale_count)
+        
+        delay_count: integer delay count value
+        scale_count: scale count value
+        
+        Returns: the calculated recalibration delay in seconds
+        '''
+        assert 0 <= delay_count < 0x200
+        assert 0 <= scale_count <= 7
+        
+        self.modify(105, [6,15], delay_count)
+        self.modify(106, [0,2], scale_count)
+        
+        return 1/self.calc_f_smclk() * delay_count * (2 ** scale_count)
+        
     def program_vco_dividers(self, N: int, num: int, denom: int):
         '''
         Load, N, numerator, and denominator values in order into the divier
@@ -515,6 +556,16 @@ class LMX2594(SPI_Device):
         assert en in [0,1]
         
         self.modify(9, [12,12], en)
+        
+    def set_input_multiplier(self, mult):
+        '''
+        Set the input multiplier for the reference input
+        
+        mult: input multiplication: 1 = bypass, 3-7 = mult
+        '''
+        assert (3 <= mult <= 7) or (mult == 1)
+        
+        self.modify(10, [7,11], mult)
         
     def set_output_power(self, output: int, power: int):
         '''
@@ -551,7 +602,7 @@ class LMX2594(SPI_Device):
         
         self.modify(0, [15,15], en)
         
-    def configure_ramp(self, span_hz: float, ramp_len_s: float, f_osc_in: float):
+    def configure_ramp(self, span_hz: float, ramp_len_s: float, thresh_hz: float):
         '''
         Helper function to set up for an automatic triangle wave FMCW frequency sweep on RAMP0
         Right now this does not recalibrate the VCO
@@ -560,12 +611,13 @@ class LMX2594(SPI_Device):
         Setting FCAL_EN = 1 will start the ramp
         
         span_hz: total span of sweep in the freuency domain. RAMP_THRESH is set to this value * 2
+                    Note that this is the span of the sweep at the VCO
+                    If you have an output divider, that must be accounted for
         ramp_len_ns: length of time it takes for one ramp to complete in seconds
-        f_osc_in: reference input frequency in Hz
-        f_vco: the CW VCO output frequency in Hz
+        thresh_hz: how long to sweep for before recalibrating the VCO
         '''
-        f_pd = self.calc_f_pd(f_osc_in)
-        f_vco = self.calc_f_vco(f_osc_in)
+        f_pd = self.calc_f_pd()
+        f_vco = self.calc_f_vco()
         
         self.modify(105, [5,5], 0) #Configure for automatic ramping mode
         self.modify(101, [0,1], 0) #Trigger next ramp on current ramp's timeout
@@ -573,11 +625,18 @@ class LMX2594(SPI_Device):
         self.modify(101, [4,4], 0) #RAMP0 comes after RAMP0
         self.modify(97, [15,15], 1) #Reset ramp at start (required for automatic mode)
         self.modify(106, [4,4], 0) #No VCO recal after ramp
+        self.write(60, 0) #Set LD_DLY to 0 so we get lock immediately
+        self.modify(106, [0,2], 1) #Set RAMP_SCALE_COUNT to 1 for RAMP_DLY *= 2^1
+        self.modify(78, [9,9], 1) #Enable quick recal for ramp
         
         #write ramp params
-        ramp_len = int(ramp_len_s * f_pd) #calc number of cycles to feed into RAMP_LEN
-        ramp_inc = int(span_hz / f_pd * 0x1000000 / ramp_len) #how much to increment numerator each cycle
-        ramp_thresh = int(span_hz * 2 / f_pd * 16777216) #make sure we don't trigger a calibration
+        ramp_len = int(ramp_len_s * f_pd) #calc number of PD cycles to feed into RAMP_LEN
+        ramp_inc = int(span_hz / f_pd * 16777216 / ramp_len) #how much to increment numerator each cycle
+        ramp_thresh = int((thresh_hz / f_pd) * 16777216) #how long before we recal
+        
+        print(ramp_len)
+        print(ramp_inc)
+        print(ramp_thresh)
         
         assert 0x0000 <= ramp_len <= 0xFFFF
         assert 0x0000 <= ramp_inc <= 0x3FFFFFFF
@@ -609,6 +668,8 @@ class LMX2594(SPI_Device):
         self.write(86, ramp_low & 0xFFFF)
 
 def main():
+    F_REFCLK = 10e6
+    
     radar_spi = machine.SPI(baudrate=100000,
                 polarity=0,
                 phase=0,
@@ -621,7 +682,7 @@ def main():
 
     radar_csb = machine.Pin(17, machine.Pin.OUT)
     
-    pll = LMX2594(radar_spi, radar_csb)
+    pll = LMX2594(radar_spi, radar_csb, F_REFCLK)
     
     #PLL Programming
     pll.reset()
@@ -629,16 +690,20 @@ def main():
     time.sleep(0.01)
     
     print("\nSending cal enable")
-    pll.set_input_doubler(1)
-    pll.program_vco_dividers(575, 1, 4294967295)
+    pll.set_input_doubler(0) #No doubler so we can use the multipler
+    pll.set_input_multiplier(4) #x4 for 40 MHz effective ref freq
+    
+    pll.program_vco_dividers(567//2, 1, 4294967295) #Den must be this value in ramp mode
     pll.set_channel_divider(0) #index 0 = divide by 2
     pll.set_rf_output_mux(0, 0) #Set output A to use the channel divider, cancels out the x2 input doubler
     pll.set_output_power(0, 12) #Set output power to meet desired LO input level
+    pll.set_smclk_div(0) #Divide by 1 for 10 MHz state machine clock
+    print(pll.set_vco_recal_delay(500,0)) #set delay to 25 us
     pll.enable_calibration(0)
     
     time.sleep(0.1)
     
-    pll.configure_ramp(10e6, 5e-5, 10e6)
+    pll.configure_ramp(150e6 * 2, 1e-3, 151e6)
     pll.enable_ramp(1)
     pll.enable_calibration(1)
     
@@ -658,7 +723,9 @@ def main():
     print(pll.read_input_regs())
     print(pll.read_general_regs())
     
-    print(pll.calc_f_vco(10e6)) #This should be 5.75 GHz x 2
+    print(pll.calc_f_pd())
+    print(pll.calc_f_vco()) #This should be 5.75 GHz x 2
+    print(pll.calc_f_smclk())
     
     input()
     
