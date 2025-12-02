@@ -602,19 +602,19 @@ class LMX2594(SPI_Device):
         
         self.modify(0, [15,15], en)
         
-    def configure_ramp(self, span_hz: float, ramp_len_s: float, thresh_hz: float):
+    def configure_ramp(self, span_hz: float, ramp_len_s: float, thresh_hz: float, neg_ramp: bool):
         '''
         Helper function to set up for an automatic triangle wave FMCW frequency sweep on RAMP0
-        Right now this does not recalibrate the VCO
         
         NOTE: enable_calibration latches the ramp, so FCAL_EN must == 0 when this function is called
         Setting FCAL_EN = 1 will start the ramp
         
         span_hz: total span of sweep in the freuency domain. RAMP_THRESH is set to this value * 2
                     Note that this is the span of the sweep at the VCO
-                    If you have an output divider, that must be accounted for
+                    IMPORTANT: If you have an output divider, that must be accounted for
         ramp_len_ns: length of time it takes for one ramp to complete in seconds
         thresh_hz: how long to sweep for before recalibrating the VCO
+        inv_ramp: whether or not to sweep in reverse (from highest to lowest freq)
         '''
         f_pd = self.calc_f_pd()
         f_vco = self.calc_f_vco()
@@ -633,6 +633,10 @@ class LMX2594(SPI_Device):
         ramp_len = int(ramp_len_s * f_pd) #calc number of PD cycles to feed into RAMP_LEN
         ramp_inc = int(span_hz / f_pd * 16777216 / ramp_len) #how much to increment numerator each cycle
         ramp_thresh = int((thresh_hz / f_pd) * 16777216) #how long before we recal
+        
+        #apply 2's complement if we want a negative ramp
+        if neg_ramp:
+            ramp_inc = 0x40000000 - ramp_inc
         
         print(ramp_len)
         print(ramp_inc)
@@ -670,7 +674,7 @@ class LMX2594(SPI_Device):
 def main():
     F_REFCLK = 10e6
     
-    radar_spi = machine.SPI(baudrate=100000,
+    radar_spi = machine.SPI(baudrate=1000000,
                 polarity=0,
                 phase=0,
                 firstbit=machine.SPI.MSB,
@@ -689,24 +693,27 @@ def main():
     pll.enable_readback_blind() #enable SPI read
     time.sleep(0.01)
     
-    print("\nSending cal enable")
-    pll.set_input_doubler(0) #No doubler so we can use the multipler
-    pll.set_input_multiplier(4) #x4 for 40 MHz effective ref freq
+    pll.set_input_doubler(1) #Use doubler
+    pll.set_input_multiplier(1) #bypass since we are using doubler
     
-    pll.program_vco_dividers(567//2, 1, 4294967295) #Den must be this value in ramp mode
+    pll.program_vco_dividers(580, 1, 4294967295) #Den must be this value in ramp mode
     pll.set_channel_divider(0) #index 0 = divide by 2
-    pll.set_rf_output_mux(0, 0) #Set output A to use the channel divider, cancels out the x2 input doubler
-    pll.set_output_power(0, 12) #Set output power to meet desired LO input level
+    
+    pll.set_rf_output_mux(0, 0) #Set output A to use the channel divider, cancels out the x2 input doubler    
+    pll.set_output_power(0, 9) #Set output power to meet desired LO input level (this setting produces lowest FMCW spurs)
     pll.set_smclk_div(0) #Divide by 1 for 10 MHz state machine clock
-    print(pll.set_vco_recal_delay(500,0)) #set delay to 25 us
+    print(pll.set_vco_recal_delay(300,0)) #set delay to 25 us
     pll.enable_calibration(0)
     
     time.sleep(0.1)
     
-    pll.configure_ramp(150e6 * 2, 1e-3, 151e6)
+    bw_ramp = 60e6
+    
+    #Ramp descending as app note shows that there is more cal headroom when descending at >= room temp
+    pll.configure_ramp(bw_ramp * 2, 1e-3, bw_ramp * 3, True)
     pll.enable_ramp(1)
     pll.enable_calibration(1)
-    
+                               
     time.sleep(0.1)
     
     print(pll.read_lock_status_regs())
