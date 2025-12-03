@@ -1,6 +1,7 @@
 import machine
 import time
 import struct
+import sys
 
 def modify_word(word: int, bits: tuple[int, int], data: int):
     '''
@@ -46,13 +47,14 @@ class SPI_Device:
         self.spi.write(byte)
 
 class LMX2594(SPI_Device):
-    def __init__(self, spi: machine.SPI, cs: machine.Pin, f_osc_in: float):
+    def __init__(self, spi: machine.SPI, cs: machine.Pin, rclk: machine.Pin, f_osc_in: float):
         '''
         spi: micropython SPI interface class defining the SPI driver connected to the PLL
         cs: micropython pin class defining the pin used for the CSB signal
         f_osc_in: frequency of the PLL reference oscillator in Hz
         '''
         super().__init__(spi, cs)
+        self.rclk = rclk
         self.f_osc_in = f_osc_in
     
     def read(self, addr: int):
@@ -602,7 +604,47 @@ class LMX2594(SPI_Device):
         
         self.modify(0, [15,15], en)
         
-    def configure_ramp(self, span_hz: float, ramp_len_s: float, thresh_hz: float, neg_ramp: bool):
+    def set_ramp_trig_type(self, ramp: int, trig: int):
+        '''
+        Determine what triggers the specified ramp
+        
+        ramp: which ramp to modify (0 or 1)
+        trig: what to trigger off of
+            0 = Timeout counter
+            1 = Trigger A
+            2 = Trigger B
+        '''
+        assert ramp in [0,1]
+        assert 0 <= trig <= 2
+        
+        if ramp == 0:
+            self.modify(101, [0,1], trig)
+        elif ramp == 1:
+            self.modify(105, [0,1], trig)
+            
+    def set_ramp_trig(self, trig_idx: int, trig: int):
+        '''
+        Set the trigger for ramp trigger A/B
+        
+        trig_idx: 0 = TRIGA, 1 = TRIGB
+        trig:
+            0 = disabled
+            1 = RAMPCLK rising
+            2 = RAMPDIR rising
+            4 = always triggered
+            9 = RAMPCLK falling
+            10 = RAMPDIR falling
+        '''
+        assert trig_idx in [0,1]
+        assert trig in [0,1,2,4,9,10]
+        
+        if trig_idx == 0: #A
+            self.modify(97, [3,6], trig)
+        elif trig_idx == 1: #B
+            self.modify(97, [7,10], trig)
+        
+    def configure_ramp(self, span_hz: float, ramp_len_s: float, thresh_hz: float,
+                       neg_ramp: bool = False, free_run: bool = True):
         '''
         Helper function to set up for an automatic triangle wave FMCW frequency sweep on RAMP0
         
@@ -614,15 +656,23 @@ class LMX2594(SPI_Device):
                     IMPORTANT: If you have an output divider, that must be accounted for
         ramp_len_ns: length of time it takes for one ramp to complete in seconds
         thresh_hz: how long to sweep for before recalibrating the VCO
-        inv_ramp: whether or not to sweep in reverse (from highest to lowest freq)
+        neg_ramp: whether or not to sweep in reverse (from highest to lowest freq)
+        free_run: run indefinitely if true, trigger on RCLK rising edge if false
         '''
         f_pd = self.calc_f_pd()
         f_vco = self.calc_f_vco()
         
         self.modify(105, [5,5], 0) #Configure for automatic ramping mode
-        self.modify(101, [0,1], 0) #Trigger next ramp on current ramp's timeout
-        self.modify(97, [0,1], 0) #Trigger next ramp burst on ramp transition
+        
+        if free_run:
+            self.set_ramp_trig_type(0,0) #Trigger next ramp on current ramp's timeout
+            self.set_ramp_trig(0,0) #Disable trigger A
+        else:
+            self.set_ramp_trig_type(0,1) #Trigger off of trigger A
+            self.set_ramp_trig(0,1) #Trigger on RampClk
+        
         self.modify(101, [4,4], 0) #RAMP0 comes after RAMP0
+        
         self.modify(97, [15,15], 1) #Reset ramp at start (required for automatic mode)
         self.modify(106, [4,4], 0) #No VCO recal after ramp
         self.write(60, 0) #Set LD_DLY to 0 so we get lock immediately
@@ -674,7 +724,7 @@ class LMX2594(SPI_Device):
 def main():
     F_REFCLK = 10e6
     
-    radar_spi = machine.SPI(baudrate=1000000,
+    radar_spi = machine.SPI(baudrate=5000000,
                 polarity=0,
                 phase=0,
                 firstbit=machine.SPI.MSB,
@@ -685,10 +735,12 @@ def main():
                 miso=machine.Pin(16))
 
     radar_csb = machine.Pin(17, machine.Pin.OUT)
+    radar_rclk = machine.Pin(20, machine.Pin.OUT)
     
-    pll = LMX2594(radar_spi, radar_csb, F_REFCLK)
+    pll = LMX2594(radar_spi, radar_csb, radar_rclk, F_REFCLK)
     
     #PLL Programming
+    pll.rclk.value(0) #set RCLK low
     pll.reset()
     pll.enable_readback_blind() #enable SPI read
     time.sleep(0.01)
@@ -707,10 +759,10 @@ def main():
     
     time.sleep(0.1)
     
-    bw_ramp = 60e6
+    bw_ramp = 50e6
     
     #Ramp descending as app note shows that there is more cal headroom when descending at >= room temp
-    pll.configure_ramp(bw_ramp * 2, 1e-3, bw_ramp * 3, True)
+    pll.configure_ramp(bw_ramp * 2, 1e-3, bw_ramp * 3, neg_ramp=True, free_run=False)
     pll.enable_ramp(1)
     pll.enable_calibration(1)
                                
@@ -734,7 +786,11 @@ def main():
     print(pll.calc_f_vco()) #This should be 5.75 GHz x 2
     print(pll.calc_f_smclk())
     
-    input()
+    while sys.stdin.read(2) != "q\n":
+        pll.rclk.value(1) #trigger ramp
+        print("Triggered ramp!")
+        time.sleep(0.01)
+        pll.rclk.value(0) #reset pin
     
     print("Powering Down")
     pll.powerdown(1)
