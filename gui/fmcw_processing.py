@@ -7,11 +7,12 @@ import pyaudio
 import serial
 
 from multiprocessing import Process, Queue
+import tkinter as tk
 
 import matplotlib.pyplot as plt
 
 SAMPLE_RATE = 48000
-SAMPLES_PER_LOOP = 2048
+SAMPLES_PER_LOOP = 1500
 CHIRP_THRESH = 10000
 SAMPLES_PER_CHIRP = 72
 BIT_DEPTH = 16
@@ -98,16 +99,19 @@ while input() != "quit":
     #print(fft_output)
     #print(fft_labels)
     
-    fig, (ax1, ax2) = plt.subplots(2,1)
+    fig, (ax1, ax2) = plt.subplots(2,1, layout="constrained")
     
     ax1.plot(list(range(0,len(audio_samples_ramp))), audio_samples_ramp)
     ax1.axvline(x=chirp_start, color='red', linestyle='--')
     ax1.axvline(x=chirp_end, color='red', linestyle='--')
+    ax1.set_ylabel("Sample Magnitude")
+    ax1.set_xlabel("Sample Bin (Time domain)")
 
     ax2.plot(fft_labels, fft_output_ramp, label="Ramp Enabled")
     ax2.set_ylabel("FFT Magnitude (dB)")
     ax2.set_xlabel("Range (m)")
     
-    plt.legend()
-    plt.grid()
+    #plt.legend()
+    ax1.grid()
+    ax2.grid()
     plt.show()
