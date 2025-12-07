@@ -11,8 +11,9 @@ from multiprocessing import Process, Queue
 import matplotlib.pyplot as plt
 
 SAMPLE_RATE = 48000
-DELAY_SAMPLES = 0 #samples to delay before grabbing chirp
-SAMPLES_PER_LOOP = 1000
+SAMPLES_PER_LOOP = 2048
+CHIRP_THRESH = 10000
+SAMPLES_PER_CHIRP = 72
 BIT_DEPTH = 16
 
 PICO_PORT = "COM6"
@@ -43,39 +44,47 @@ radar.open()
 
 print(radar.is_open)
 
-while input() != "quit":
-    #open audio device
-    stream = audio.open(format = pyaudio.paInt16,
+stream = audio.open(format = pyaudio.paInt16,
         channels = 1,
         rate = SAMPLE_RATE, #sample rate
         input = True,
         frames_per_buffer = SAMPLES_PER_LOOP,
-        input_device_index = 0)
-            
+        input_device_index = 0,
+        start=False)
+
+while input() != "quit":
+
+    stream.start_stream()
+    #dummy read just to clear the bufffer
+    stream.read(SAMPLES_PER_LOOP, exception_on_overflow = True)
     
-    #Get baseline noise floor
-    audio_data_raw_baseline = stream.read(SAMPLES_PER_LOOP, exception_on_overflow = True) #immediately read 1ms worth of data
-
     radar.write(b' \n') #trigger a ramp
-    time.sleep(DELAY_SAMPLES/SAMPLES_PER_LOOP)
-
     audio_data_raw_ramp = stream.read(SAMPLES_PER_LOOP, exception_on_overflow = True) #immediately read 1ms worth of data
 
-    stream.close() #we must close the stream each time to ensure we capture the pulse
+    stream.stop_stream() #we must close the stream each time to ensure we capture the pulse
 
-    audio_samples_baseline = []
     audio_samples_ramp = []
 
     for i in range(SAMPLES_PER_LOOP):
-        audio_samples_baseline.append(int.from_bytes(audio_data_raw_baseline[(i*2):(i*2)+2], "little", signed=True))
         audio_samples_ramp.append(int.from_bytes(audio_data_raw_ramp[(i*2):(i*2)+2], "little", signed=True))
 
-    bin_size = SAMPLE_RATE/SAMPLES_PER_LOOP
+    #gate sampling until we pass an amplitude threshold
+    chirp_start = 0
+    
+    for i, sample in enumerate(audio_samples_ramp):
+        if sample > CHIRP_THRESH:
+            chirp_start = i
+            break
+    
+    chirp_end = chirp_start + SAMPLES_PER_CHIRP
+    
+    audio_samples_ramp_pruned = audio_samples_ramp[chirp_start: chirp_end]
+
+    bin_size = SAMPLE_RATE/SAMPLES_PER_CHIRP
     #Dynamic range of ADC + 10log(bandwidth of 1x bin)
     fft_offset = 0 #(6.02 * BIT_DEPTH) + 1.76 + 10 * np.log10(bin_size)
 
-    fft_output_baseline = 20 * np.log10(np.abs(np.fft.rfft(audio_samples_baseline))) - fft_offset
-    fft_output_ramp = 20 * np.log10(np.abs(np.fft.rfft(audio_samples_ramp))) - fft_offset
+    fft_output_ramp = 20 * np.log10(np.abs(np.fft.rfft(audio_samples_ramp_pruned))) - fft_offset
 
     fft_labels = []
     ranges = []
@@ -88,11 +97,17 @@ while input() != "quit":
     #print(audio_samples)
     #print(fft_output)
     #print(fft_labels)
+    
+    fig, (ax1, ax2) = plt.subplots(2,1)
+    
+    ax1.plot(list(range(0,len(audio_samples_ramp))), audio_samples_ramp)
+    ax1.axvline(x=chirp_start, color='red', linestyle='--')
+    ax1.axvline(x=chirp_end, color='red', linestyle='--')
 
-    plt.plot(fft_labels, fft_output_ramp, label="Ramp Enabled")
-    plt.plot(fft_labels, fft_output_baseline, label="No Ramp")
-    plt.ylabel("FFT Magnitude (dB)")
-    plt.xlabel("Range (m)")
+    ax2.plot(fft_labels, fft_output_ramp, label="Ramp Enabled")
+    ax2.set_ylabel("FFT Magnitude (dB)")
+    ax2.set_xlabel("Range (m)")
+    
     plt.legend()
     plt.grid()
     plt.show()
