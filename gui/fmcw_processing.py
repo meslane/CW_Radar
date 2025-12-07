@@ -11,7 +11,8 @@ from multiprocessing import Process, Queue
 import matplotlib.pyplot as plt
 
 SAMPLE_RATE = 48000
-SAMPLES_PER_LOOP = 48000 * 1
+DELAY_SAMPLES = 0 #samples to delay before grabbing chirp
+SAMPLES_PER_LOOP = 1000
 BIT_DEPTH = 16
 
 PICO_PORT = "COM6"
@@ -31,14 +32,6 @@ for i in range(0, numdevices):
         
 print(devices)
 
-#open audio device
-stream = audio.open(format = pyaudio.paInt16,
-            channels = 1,
-            rate = SAMPLE_RATE, #sample rate
-            input = True,
-            frames_per_buffer = SAMPLE_RATE,
-            input_device_index = 1)
-            
 radar = serial.Serial(
     port = PICO_PORT,
     baudrate = 115200,
@@ -51,12 +44,24 @@ radar.open()
 print(radar.is_open)
 
 while input() != "quit":
+    #open audio device
+    stream = audio.open(format = pyaudio.paInt16,
+        channels = 1,
+        rate = SAMPLE_RATE, #sample rate
+        input = True,
+        frames_per_buffer = SAMPLES_PER_LOOP,
+        input_device_index = 0)
+            
+    
     #Get baseline noise floor
-    audio_data_raw_baseline = stream.read(SAMPLES_PER_LOOP, exception_on_overflow = False) #immediately read 1ms worth of data
+    audio_data_raw_baseline = stream.read(SAMPLES_PER_LOOP, exception_on_overflow = True) #immediately read 1ms worth of data
 
     radar.write(b' \n') #trigger a ramp
+    time.sleep(DELAY_SAMPLES/SAMPLES_PER_LOOP)
 
-    audio_data_raw_ramp = stream.read(SAMPLES_PER_LOOP, exception_on_overflow = False) #immediately read 1ms worth of data
+    audio_data_raw_ramp = stream.read(SAMPLES_PER_LOOP, exception_on_overflow = True) #immediately read 1ms worth of data
+
+    stream.close() #we must close the stream each time to ensure we capture the pulse
 
     audio_samples_baseline = []
     audio_samples_ramp = []
