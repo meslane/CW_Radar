@@ -13,15 +13,17 @@ import matplotlib.pyplot as plt
 
 SAMPLE_RATE = 48000
 SAMPLES_PER_LOOP = 1500
-CHIRP_THRESH = 10000
-SAMPLES_PER_CHIRP = 72
+SAMPLES_PER_CHIRP = int(96 * 1.5)
 BIT_DEPTH = 16
 
 PICO_PORT = "COM6"
 
 #radar sweep params
-DFDT = 5e10
+DFDT = 2.5e10
 C = 3e8
+
+#chrip detector params
+CHIRP_TRIG_THRESH = 1500
 
 audio = pyaudio.PyAudio()
 info = audio.get_host_api_info_by_index(0)
@@ -70,12 +72,24 @@ while input() != "quit":
         audio_samples_ramp.append(int.from_bytes(audio_data_raw_ramp[(i*2):(i*2)+2], "little", signed=True))
 
     #gate sampling until we pass an amplitude threshold
-    chirp_start = 0
+    #this algorithm measures the average magnitude of each chrip window over the threshold and returns the index of the strongest one
+    #chirp candidates is list of (index, window_avg)
+    chirp_candidates = [(0,0)]
     
     for i, sample in enumerate(audio_samples_ramp):
-        if sample > CHIRP_THRESH:
-            chirp_start = i
-            break
+        if sample > CHIRP_TRIG_THRESH:
+            #only if the trigger threshold is exceeded do we do the more expensive task of computing the window average
+            chirp_avg = np.average(np.abs(audio_samples_ramp[i:i+SAMPLES_PER_CHIRP]))
+            chirp_candidates.append((i,chirp_avg))
+    
+    chirp_start = max(chirp_candidates, key=lambda x: x[1])[0]
+    chirp_mag = max(chirp_candidates, key=lambda x: x[1])[1]
+    
+    print(f"Found {len(chirp_candidates)} chirp candidates above thresh")
+    print(f"Selected window at N={chirp_start} with mag={chirp_mag}")
+                
+    if chirp_start == 0:
+        print("WARNING: chirp start == 0, trigger likely failed!")
     
     chirp_end = chirp_start + SAMPLES_PER_CHIRP
     

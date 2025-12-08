@@ -19,18 +19,20 @@ from matplotlib import colors
 
 SAMPLE_RATE = 48000
 SAMPLES_PER_LOOP = 1500
-CHIRP_THRESH = 10000
-SAMPLES_PER_CHIRP = 72
+CHIRP_TRIG_THRESH = 1500
+SAMPLES_PER_CHIRP = int(96 * 1.5)
 FFT_BINS = SAMPLES_PER_CHIRP // 2 + 1
 BIT_DEPTH = 16
 
-WINDOW_LENGTH = 241
+WINDOW_LENGTH = 181
+FFT_MIN = 60
+FFT_MAX = 130
 
 PICO_PORT = "COM6"
 
 #radar sweep params
 BW = 50e6
-DFDT = 5e10
+DFDT = 2.5e10
 PRF = 3 #Hz
 C = 3e8
 
@@ -118,7 +120,7 @@ class Window:
         self.fft_im = self.fft_ax.imshow(self.fft_data, 
                                             interpolation='none', 
                                             animated = True,
-                                            norm=colors.LogNorm(vmin=70, vmax=120),
+                                            norm=colors.LogNorm(vmin=FFT_MIN, vmax=FFT_MAX),
                                             aspect='auto',
                                             origin='lower',
                                             extent=[0, FFT_BINS, 
@@ -148,12 +150,22 @@ class Window:
                 audio_samples_ramp.append(int.from_bytes(data[(i*2):(i*2)+2], "little", signed=True))
                 
             #gate sampling until we pass an amplitude threshold
-            chirp_start = 0
-            
+            chirp_candidates = [(0,0)]
+    
             for i, sample in enumerate(audio_samples_ramp):
-                if sample > CHIRP_THRESH:
-                    chirp_start = i
-                    break
+                if sample > CHIRP_TRIG_THRESH:
+                    #only if the trigger threshold is exceeded do we do the more expensive task of computing the window average
+                    chirp_avg = np.average(np.abs(audio_samples_ramp[i:i+SAMPLES_PER_CHIRP]))
+                    chirp_candidates.append((i,chirp_avg))
+            
+            chirp_start = max(chirp_candidates, key=lambda x: x[1])[0]
+            chirp_mag = max(chirp_candidates, key=lambda x: x[1])[1]
+            
+            print(f"Found {len(chirp_candidates)} chirp candidates above thresh")
+            print(f"Selected window at N={chirp_start} with mag={chirp_mag}")
+            
+            if chirp_start == 0:
+                print("WARNING: chirp start == 0, trigger likely failed!")
             
             chirp_end = chirp_start + SAMPLES_PER_CHIRP
             

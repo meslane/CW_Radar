@@ -762,7 +762,7 @@ def main():
     bw_ramp = 50e6
     
     #Ramp descending as app note shows that there is more cal headroom when descending at >= room temp
-    pll.configure_ramp(bw_ramp * 2, 1e-3, bw_ramp * 3, neg_ramp=True, free_run=False)
+    pll.configure_ramp(bw_ramp * 2, 2.0e-3, bw_ramp * 3, neg_ramp=True, free_run=False)
     pll.enable_ramp(1)
     pll.enable_calibration(1)
                                
@@ -789,7 +789,7 @@ def main():
     while sys.stdin.read(2) != "q\n":
         pll.rclk.value(1) #trigger ramp
         print("Triggered ramp!")
-        time.sleep(0.01)
+        #time.sleep(0.01)
         pll.rclk.value(0) #reset pin
     
     print("Powering Down")
