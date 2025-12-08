@@ -25,6 +25,9 @@ C = 3e8
 #chrip detector params
 CHIRP_TRIG_THRESH = 1500
 
+#filter cutoff
+CUTOFF_HIGHPASS = 500 #500 Hz cutoff attenuates 0m and 3m bins
+
 audio = pyaudio.PyAudio()
 info = audio.get_host_api_info_by_index(0)
 
@@ -54,6 +57,8 @@ stream = audio.open(format = pyaudio.paInt16,
         frames_per_buffer = SAMPLES_PER_LOOP,
         input_device_index = 0,
         start=False)
+        
+hpf = scipy.signal.butter(10, CUTOFF_HIGHPASS, "hp", fs=SAMPLE_RATE, output="sos")
 
 while input() != "quit":
 
@@ -71,15 +76,18 @@ while input() != "quit":
     for i in range(SAMPLES_PER_LOOP):
         audio_samples_ramp.append(int.from_bytes(audio_data_raw_ramp[(i*2):(i*2)+2], "little", signed=True))
 
+    #apply scipy high pass filter to remove low frequency clutter
+    audio_samples_ramp_filtered = scipy.signal.sosfilt(hpf, audio_samples_ramp)
+
     #gate sampling until we pass an amplitude threshold
     #this algorithm measures the average magnitude of each chrip window over the threshold and returns the index of the strongest one
     #chirp candidates is list of (index, window_avg)
     chirp_candidates = [(0,0)]
     
-    for i, sample in enumerate(audio_samples_ramp):
+    for i, sample in enumerate(audio_samples_ramp_filtered):
         if sample > CHIRP_TRIG_THRESH:
             #only if the trigger threshold is exceeded do we do the more expensive task of computing the window average
-            chirp_avg = np.average(np.abs(audio_samples_ramp[i:i+SAMPLES_PER_CHIRP]))
+            chirp_avg = np.average(np.abs(audio_samples_ramp_filtered[i:i+SAMPLES_PER_CHIRP]))
             chirp_candidates.append((i,chirp_avg))
     
     chirp_start = max(chirp_candidates, key=lambda x: x[1])[0]
@@ -93,7 +101,7 @@ while input() != "quit":
     
     chirp_end = chirp_start + SAMPLES_PER_CHIRP
     
-    audio_samples_ramp_pruned = audio_samples_ramp[chirp_start: chirp_end]
+    audio_samples_ramp_pruned = audio_samples_ramp_filtered[chirp_start: chirp_end]
 
     bin_size = SAMPLE_RATE/SAMPLES_PER_CHIRP
     #Dynamic range of ADC + 10log(bandwidth of 1x bin)
@@ -115,7 +123,7 @@ while input() != "quit":
     
     fig, (ax1, ax2) = plt.subplots(2,1, layout="constrained")
     
-    ax1.plot(list(range(0,len(audio_samples_ramp))), audio_samples_ramp)
+    ax1.plot(list(range(0,len(audio_samples_ramp_filtered))), audio_samples_ramp_filtered)
     ax1.axvline(x=chirp_start, color='red', linestyle='--')
     ax1.axvline(x=chirp_end, color='red', linestyle='--')
     ax1.set_ylabel("Sample Magnitude")

@@ -19,14 +19,19 @@ from matplotlib import colors
 
 SAMPLE_RATE = 48000
 SAMPLES_PER_LOOP = 1500
-CHIRP_TRIG_THRESH = 1500
 SAMPLES_PER_CHIRP = int(96 * 1.5)
 FFT_BINS = SAMPLES_PER_CHIRP // 2 + 1
 BIT_DEPTH = 16
 
+#filter cutoff
+CUTOFF_HIGHPASS = 500
+
+#window trigger threshold
+CHIRP_TRIG_THRESH = 1500
+
 WINDOW_LENGTH = 181
 FFT_MIN = 60
-FFT_MAX = 130
+FFT_MAX = 120
 
 PICO_PORT = "COM6"
 
@@ -41,6 +46,9 @@ pulse_period = 1/PRF
 
 TKINTER_STICKY = "NSEW"
 ANIMATION_INTERVAL = 1000
+
+#Generate highpass filter coefficients
+hpf = scipy.signal.butter(10, CUTOFF_HIGHPASS, "hp", fs=SAMPLE_RATE, output="sos")
 
 def radar_thread(stream_id, audio_queue, close_queue):
     audio = pyaudio.PyAudio()
@@ -148,14 +156,16 @@ class Window:
             
             for i in range(SAMPLES_PER_LOOP):
                 audio_samples_ramp.append(int.from_bytes(data[(i*2):(i*2)+2], "little", signed=True))
-                
+            
+            audio_samples_ramp_filtered = scipy.signal.sosfilt(hpf, audio_samples_ramp)
+
             #gate sampling until we pass an amplitude threshold
             chirp_candidates = [(0,0)]
     
-            for i, sample in enumerate(audio_samples_ramp):
+            for i, sample in enumerate(audio_samples_ramp_filtered):
                 if sample > CHIRP_TRIG_THRESH:
                     #only if the trigger threshold is exceeded do we do the more expensive task of computing the window average
-                    chirp_avg = np.average(np.abs(audio_samples_ramp[i:i+SAMPLES_PER_CHIRP]))
+                    chirp_avg = np.average(np.abs(audio_samples_ramp_filtered[i:i+SAMPLES_PER_CHIRP]))
                     chirp_candidates.append((i,chirp_avg))
             
             chirp_start = max(chirp_candidates, key=lambda x: x[1])[0]
@@ -169,7 +179,7 @@ class Window:
             
             chirp_end = chirp_start + SAMPLES_PER_CHIRP
             
-            audio_samples_ramp_pruned = audio_samples_ramp[chirp_start: chirp_end]
+            audio_samples_ramp_pruned = audio_samples_ramp_filtered[chirp_start: chirp_end]
             
             #do FFT on pruned time domain data
             fft_output = (20 * np.log10(np.abs(np.fft.rfft(audio_samples_ramp_pruned)))).tolist()
